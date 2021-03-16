@@ -1,0 +1,113 @@
+---
+title: "Simulation example"
+output: html_notebook
+---
+
+
+Determine whether we use the churn or the sales convention for our target variable. In the churn convention, a persuadable customer is such that $Y_0=1$ and $Y_1=0$, while in the sales convention, it is $Y_0=0$ and $Y_1=1$.
+```{r}
+library(ggplot2)
+
+source("simulation.R")
+source("eval_measures.R")
+
+use_churn_convention <- TRUE
+```
+
+
+The first approach uses bivariate beta distribution from "Olkin, Ingram, and Thomas A. Trikalinos. "Constructions for a bivariate beta distribution." Statistics & Probability Letters 96 (2015): 54-60.". Using the causal classification matrix, we know that the distribution of $S_0$ and $S_1$ should respect
+\[\beta = \mathbb E[S_0](1- \mathbb E[S_1]) - \mathrm{cov}(S_0, S_1)\]
+\[\delta = \mathbb E[S_0]\mathbb E[S_1] + \mathrm{cov}(S_0, S_1)\]
+\[\gamma = (1-\mathbb E[S_0])\mathbb E[S_1] - \mathrm{cov}(S_0, S_1)\]
+The distribution of $S_0$ and $S_1$ is defined such that $S_0 = U_{11} + U_{10}$ and $S_1 = U_{11} + U_{01}$ where $U_{00}, U_{01}, U_{10}, U_{11}$ form a Dirichlet distribution of parameters $a=[a_{00},a_{01},a_{10},a_{11}]$.
+We can derive the value of $\mathbb E[S_0]$, $\mathbb E[S_1]$ and $\mathrm{cov}(S_0, S_1)$ as functions of $a$, and derive the value of $a$ from $\beta, \gamma, \delta$ using the system of three equations above. Since there are four parameters in $a$, we can set $a_{00}+a_{01}+a_{10}+a_{11} = 1$.
+
+
+First, let's make a test for a specific value of $\beta, \gamma, \delta$:
+```{r}
+alpha <- 0.8
+beta <- 0.1
+gamma <- 0.05
+delta <- 1 - alpha - beta - gamma
+
+v <- beta * gamma - alpha * delta
+min_A <- max(v / min(alpha, delta), -v / min(beta, gamma))
+cat("Make sure that A > ", min_A, "\n")
+
+sd_noise <- 0.2
+A <- 2
+
+data <- sample_bivariate_beta(
+  beta, gamma, delta,
+  N = 5000,
+  proba_treatment = 0.65,
+  A = A,
+  noise_S_0 = sd_noise,
+  noise_S_1 = sd_noise,
+  use_churn_convention = use_churn_convention
+)
+```
+
+Compute causal precision curves of both churn and uplfit approaches (with non-null variance) and plot the curve
+```{r}
+steps <- 100
+
+curve_c <- causal_precision_curve(
+  data$S_0_hat,
+  data$S_0,
+  data$S_1,
+  n_steps = steps,
+  use_churn_convention = use_churn_convention
+)
+
+curve_u <- causal_precision_curve(
+  data$uplift_hat,
+  data$S_0,
+  data$S_1,
+  n_steps = steps,
+  use_churn_convention = use_churn_convention
+)
+
+curve_c$Approach <- "ML"
+curve_u$Approach <- "Uplift"
+
+
+ggplot(rbind(curve_c, curve_u)) +
+  geom_smooth(
+    aes(x = threshold, y = precision, color = Approach, linetype = Approach),
+    method = "gam", formula = y ~ s(x, bs = "cs", k = 50), fill = NA, size = 0.6) +
+  labs(x = "Customers in campaign (%)", y = "Causal precision") +
+  theme_bw()
+```
+
+And also the uplift curve
+```{r}
+uplift_curve_u <- true_uplift_curve(data$uplift_hat, data$uplift, use_churn_convention = use_churn_convention)
+uplift_curve_c <- true_uplift_curve(data$S_0_hat, data$uplift, use_churn_convention = use_churn_convention)
+uplift_curve_u$Approach <- "Uplift"
+uplift_curve_c$Approach <- "ML"
+
+ggplot(rbind(uplift_curve_u, uplift_curve_c),
+       aes(x = 100 * normalized_x, y = 100 * normalized_uplift, color = Approach, linetype = Approach)) +
+  # Add the diagonal line
+  geom_segment(x = 0, y = 0,
+               xend = 100, yend = max(100 * grid$normalized_uplift[grid$n == max(grid$n)]),
+               colour = "#AAAAAA", show.legend = FALSE
+              ) +
+  geom_line() +
+  labs(x = "Targeted customers (%)", y = "Uplift (%)") +
+  theme_bw()
+```
+
+We can also visualize the distribution of scores and causal class in a scatter plot
+
+```{r}
+if (use_churn_convention) {
+  cust_type_labels <- c("Sure thing", "Do-not-disturb", "Persuadable", "Lost cause")
+} else {
+  cust_type_labels <- c("Lost cause", "Persuadable", "Do-not-disturb", "Sure thing")
+}
+ggplot(data, aes(x = S_0, y = S_1, color = paste0(Y_0, Y_1))) +
+  geom_point(alpha = 0.5) +
+  scale_color_discrete(name = "Customer type", labels = cust_type_labels)
+```

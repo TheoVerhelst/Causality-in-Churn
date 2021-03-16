@@ -34,7 +34,8 @@ true_uplift_curve <- function(score, uplift, use_churn_convention = TRUE) {
   uplift <- uplift[order(score, decreasing = TRUE)]
   grid <- data.frame(n = 1:N,
                      normalized_x = (1:N) / N,
-                     normalized_uplift = cumsum(uplift) * (1:N) / N)
+                     normalized_uplift = cumsum(uplift) / N
+  )
 
   return(grid)
 }
